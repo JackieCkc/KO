@@ -72,7 +72,7 @@ func TestAdWithAllDspResponed(t *testing.T) {
 func TestAdWithOneDspTimeout(t *testing.T) {
 	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		domain := "http://" + r.Host
-		if domain == DSPS[0] {
+		if domain == DSPS[2] {
 			time.Sleep(300 * time.Millisecond)
 		}
 		i := sort.StringSlice(DSPS).Search(domain)
@@ -82,7 +82,25 @@ func TestAdWithOneDspTimeout(t *testing.T) {
 	defer teardown()
 
 	SetClient(httpClient)
-	checkStatusAndResponse("/ad?w=1&h=1", http.StatusOK, "some html for domain2", t)
+	checkStatusAndResponse("/ad?w=1&h=1", http.StatusOK, "some html for domain1", t)
+}
+
+func TestAdWithOneDspRespondsNoContent(t *testing.T) {
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		domain := "http://" + r.Host
+		if domain == DSPS[2] {
+			w.WriteHeader(http.StatusNoContent)
+			w.Write([]byte("not interested"))
+			return
+		}
+		i := sort.StringSlice(DSPS).Search(domain)
+		w.Write([]byte(fmt.Sprintf(`{"Bidprice": %d, "Body": "some html for domain%d"}`, i, i)))
+	})
+	httpClient, teardown := testingHTTPClient(h)
+	defer teardown()
+
+	SetClient(httpClient)
+	checkStatusAndResponse("/ad?w=1&h=1", http.StatusOK, "some html for domain1", t)
 }
 
 func TestAdWithAllDspTimeout(t *testing.T) {

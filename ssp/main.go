@@ -88,7 +88,7 @@ func getBid(url string, w string, h string, c chan Bid) {
 
     req.Header.Set("Content-Type", "application/json")
     res, err := getClient().Do(req)
-    if err != nil {
+    if err != nil || res.StatusCode != 200 {
         c <- Bid{0, ""}
         return
     }
