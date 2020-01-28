@@ -1,22 +1,24 @@
 package main
 
 import (
+	"context"
+	"fmt"
+	"io/ioutil"
+	"net"
 	"net/http"
 	"net/http/httptest"
-	"testing"
-	"io/ioutil"
-	"time"
-	"fmt"
-	"context"
-	"net"
 	"sort"
+	"testing"
+	"time"
 )
 
-var END_POINTS = []string {
+var END_POINTS = []string{
 	"http://domain1.com",
 	"http://domain2.com",
 	"http://domain3.com",
 }
+
+const TMAX = 200
 
 func testingHTTPClient(handler http.Handler) (*http.Client, func()) {
 	s := httptest.NewServer(handler)
@@ -33,12 +35,14 @@ func testingHTTPClient(handler http.Handler) (*http.Client, func()) {
 }
 
 func checkStatusAndResponse(url string, expectedCode int, expectedBody string, t *testing.T) {
-	SetTmax(200)
+	SetTmax(TMAX)
 	SetDspEndpoints(END_POINTS)
+
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	rr := httptest.NewRecorder()
 	handler := http.HandlerFunc(GetAd)
 	handler.ServeHTTP(rr, req)
@@ -46,6 +50,7 @@ func checkStatusAndResponse(url string, expectedCode int, expectedBody string, t
 		t.Errorf("handler returned wrong status code: got %v want %v",
 			code, expectedCode)
 	}
+
 	bytes, _ := ioutil.ReadAll(rr.Body)
 	if body := string(bytes); body != expectedBody {
 		t.Errorf("handler returned wrong body: got '%v' want '%v'",
@@ -120,5 +125,5 @@ func TestAdWithAllDspTimeout(t *testing.T) {
 	defer teardown()
 
 	SetClient(httpClient)
-    checkStatusAndResponse("/ad?w=1&h=1", http.StatusNoContent, "no ad", t)
+	checkStatusAndResponse("/ad?w=1&h=1", http.StatusNoContent, "no ad", t)
 }
