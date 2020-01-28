@@ -6,16 +6,12 @@ import (
     "encoding/json"
     "io/ioutil"
     "bytes"
+    "os"
+    "fmt"
 )
 
-var DSPS = []string {
-    "http://domain1.com",
-    "http://domain2.com",
-    "http://domain3.com",
-}
-
-const TMAX = 200 // 200 miniseconds
-
+var dspEndpoints []string
+var tmax int
 var client *http.Client
 
 type Bid struct {
@@ -23,8 +19,34 @@ type Bid struct {
     Body string `json:"body"`
 }
 
+type Configuration struct {
+    DspEndpoints []string
+    Tmax int
+}
+
 func SetClient(c *http.Client) {
     client = c
+}
+
+func SetDspEndpoints(endpoints []string) {
+    dspEndpoints = endpoints
+}
+
+func SetTmax(val int) {
+    tmax = val
+}
+
+func loadConfig() {
+    file, _ := os.Open("config.json")
+    defer file.Close()
+    decoder := json.NewDecoder(file)
+    configuration := Configuration{}
+    err := decoder.Decode(&configuration)
+    if err != nil {
+      fmt.Println("error: ", err)
+    }
+    dspEndpoints = configuration.DspEndpoints
+    tmax = configuration.Tmax
 }
 
 func GetAd(w http.ResponseWriter, r *http.Request) {
@@ -36,9 +58,9 @@ func GetAd(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    c := make(chan Bid, len(DSPS))
-    for _, dsp := range DSPS {
-        go getBid(dsp, width, height, c)
+    c := make(chan Bid, len(dspEndpoints))
+    for _, endpoint := range dspEndpoints {
+        go getBid(endpoint, width, height, c)
     }
 
     maxPrice := 0
@@ -53,11 +75,11 @@ func GetAd(w http.ResponseWriter, r *http.Request) {
                 body = bid.Body
             }
             respCount += 1
-            if respCount == len(DSPS) {
+            if respCount == len(dspEndpoints) {
                 resp(body, w)
                 return
             }
-        case <-time.After(TMAX * time.Millisecond):
+        case <-time.After(time.Millisecond * time.Duration(tmax)):
             resp(body, w)
             return
         }
@@ -122,6 +144,7 @@ func resp(body string, w http.ResponseWriter) {
 }
 
 func main() {
+    loadConfig()
     http.HandleFunc("/ad", GetAd)
     http.ListenAndServe(":8090", nil)
 }

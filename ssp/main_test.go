@@ -12,6 +12,12 @@ import (
 	"sort"
 )
 
+var END_POINTS = []string {
+	"http://domain1.com",
+	"http://domain2.com",
+	"http://domain3.com",
+}
+
 func testingHTTPClient(handler http.Handler) (*http.Client, func()) {
 	s := httptest.NewServer(handler)
 
@@ -27,6 +33,8 @@ func testingHTTPClient(handler http.Handler) (*http.Client, func()) {
 }
 
 func checkStatusAndResponse(url string, expectedCode int, expectedBody string, t *testing.T) {
+	SetTmax(200)
+	SetDspEndpoints(END_POINTS)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -59,7 +67,7 @@ func TestAdWithNoAd(t *testing.T) {
 func TestAdWithAllDspResponed(t *testing.T) {
 	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		domain := "http://" + r.Host
-		i := sort.StringSlice(DSPS).Search(domain)
+		i := sort.StringSlice(END_POINTS).Search(domain)
 		w.Write([]byte(fmt.Sprintf(`{"Bidprice": %d, "Body": "some html for domain%d"}`, i, i)))
 	})
 	httpClient, teardown := testingHTTPClient(h)
@@ -72,10 +80,10 @@ func TestAdWithAllDspResponed(t *testing.T) {
 func TestAdWithOneDspTimeout(t *testing.T) {
 	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		domain := "http://" + r.Host
-		if domain == DSPS[2] {
+		if domain == END_POINTS[2] {
 			time.Sleep(300 * time.Millisecond)
 		}
-		i := sort.StringSlice(DSPS).Search(domain)
+		i := sort.StringSlice(END_POINTS).Search(domain)
 		w.Write([]byte(fmt.Sprintf(`{"Bidprice": %d, "Body": "some html for domain%d"}`, i, i)))
 	})
 	httpClient, teardown := testingHTTPClient(h)
@@ -88,12 +96,12 @@ func TestAdWithOneDspTimeout(t *testing.T) {
 func TestAdWithOneDspRespondsNoContent(t *testing.T) {
 	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		domain := "http://" + r.Host
-		if domain == DSPS[2] {
+		if domain == END_POINTS[2] {
 			w.WriteHeader(http.StatusNoContent)
 			w.Write([]byte("not interested"))
 			return
 		}
-		i := sort.StringSlice(DSPS).Search(domain)
+		i := sort.StringSlice(END_POINTS).Search(domain)
 		w.Write([]byte(fmt.Sprintf(`{"Bidprice": %d, "Body": "some html for domain%d"}`, i, i)))
 	})
 	httpClient, teardown := testingHTTPClient(h)
