@@ -1,0 +1,8 @@
+{
+	"DspEndpoints": [
+		"http://domain1.com",
+		"http://domain2.com",
+		"http://domain3.com"
+	],
+	"Tmax": 200
+}
