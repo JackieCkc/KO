@@ -4,160 +4,95 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"gopkg.in/jarcoal/httpmock.v1"
 	"io/ioutil"
 	"time"
+	"fmt"
+	"context"
+	"net"
+	"sort"
 )
 
+func testingHTTPClient(handler http.Handler) (*http.Client, func()) {
+	s := httptest.NewServer(handler)
+
+	cli := &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(_ context.Context, network, _ string) (net.Conn, error) {
+				return net.Dial(network, s.Listener.Addr().String())
+			},
+		},
+	}
+
+	return cli, s.Close
+}
+
+func checkStatusAndResponse(url string, expectedCode int, expectedBody string, t *testing.T) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	handler := http.HandlerFunc(GetAd)
+	handler.ServeHTTP(rr, req)
+	if code := rr.Code; code != expectedCode {
+		t.Errorf("handler returned wrong status code: got %v want %v",
+			code, expectedCode)
+	}
+	bytes, _ := ioutil.ReadAll(rr.Body)
+	if body := string(bytes); body != expectedBody {
+		t.Errorf("handler returned wrong body: got '%v' want '%v'",
+			body, expectedBody)
+	}
+}
+
 func TestAdWithInvalidParams(t *testing.T) {
-	urls := []string{"/ad", "/ad?w=1", "/ad?h=1", "/ad?w=1&h="}
+	urls := []string{"/ad", "/ad?w=1", "/ad?h=1", "/ad?w=&h=", "/ad?w=1&h=", "/ad?w=&h=1"}
 	for _, url := range urls {
-		req, err := http.NewRequest("GET", url, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		rr := httptest.NewRecorder()
-		handler := http.HandlerFunc(Ad)
-		handler.ServeHTTP(rr, req)
-		if status := rr.Code; status != http.StatusBadRequest {
-			t.Errorf("handler returned wrong status code: got %v want %v",
-				status, http.StatusBadRequest)
-		}
-		bytes, _ := ioutil.ReadAll(rr.Body)
-		if body := string(bytes); body != "params 'w' and 'h' are required" {
-			t.Errorf("handler returned wrong body: got '%v' want '%v'",
-				body, "params 'w' and 'h' are required")
-		}
+		checkStatusAndResponse(url, http.StatusBadRequest, "params 'w' and 'h' are required", t)
 	}
 }
 
 func TestAdWithNoAd(t *testing.T) {
-	req, err := http.NewRequest("GET", "/ad?w=1&h=1", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rr := httptest.NewRecorder()
-	handler := http.HandlerFunc(Ad)
-	handler.ServeHTTP(rr, req)
-	if status := rr.Code; status != http.StatusNoContent {
-		t.Errorf("handler returned wrong status code: got %v want %v",
-			status, http.StatusNoContent)
-	}
-	bytes, _ := ioutil.ReadAll(rr.Body)
-	if body := string(bytes); body != "no ad" {
-		t.Errorf("handler returned wrong body: got '%v' want '%v'",
-			body, "no ad")
-	}
+	checkStatusAndResponse("/ad?w=1&h=1", http.StatusNoContent, "no ad", t)
 }
 
 func TestAdWithAllDspResponed(t *testing.T) {
-	getJsonMockBytes := func(url string) []byte {
-	    switch url {
-	    case "https://domain1.com/bid":
-	        return []byte(`{"Bidprice": 1, "Body": "some html for domain1"}`)
-	    case "https://domain2.com/bid":	
-	        return []byte(`{"Bidprice": 2, "Body": "some html for domain2"}`)
-	    case "https://domain3.com/bid":	
-	        return []byte(`{"Bidprice": 3, "Body": "some html for domain3"}`)
-	    }
-	    return nil
-	}
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		domain := "http://" + r.Host
+		i := sort.StringSlice(DSPS).Search(domain)
+		w.Write([]byte(fmt.Sprintf(`{"Bidprice": %d, "Body": "some html for domain%d"}`, i, i)))
+	})
+	httpClient, teardown := testingHTTPClient(h)
+	defer teardown()
 
-	httpmock.Activate()
-    defer httpmock.DeactivateAndReset()
-    for _, dsp := range DSPS {
-    	url := dsp + "/bid"
-        httpmock.RegisterResponder("POST", url, httpmock.NewBytesResponder(200, getJsonMockBytes(url)))
-    }
-
-	req, err := http.NewRequest("GET", "/ad?w=1&h=1", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rr := httptest.NewRecorder()
-	handler := http.HandlerFunc(Ad)
-	handler.ServeHTTP(rr, req)
-	if status := rr.Code; status != http.StatusOK {
-		t.Errorf("handler returned wrong status code: got %v want %v",
-			status, http.StatusOK)
-	}
-	bytes, _ := ioutil.ReadAll(rr.Body)
-	if body := string(bytes); body != "some html for domain3" {
-		t.Errorf("handler returned wrong body: got '%v' want '%v'",
-			body, "some html for domain3")
-	}
+	SetClient(httpClient)
+	checkStatusAndResponse("/ad?w=1&h=1", http.StatusOK, "some html for domain2", t)
 }
 
 func TestAdWithOneDspTimeout(t *testing.T) {
-	getJsonMockBytes := func(url string) []byte {
-	    switch url {
-	    case "https://domain1.com/bid":
-	        return []byte(`{"Bidprice": 1, "Body": "some html for domain1"}`)
-	    case "https://domain2.com/bid":	
-	        return []byte(`{"Bidprice": 2, "Body": "some html for domain2"}`)
-	    case "https://domain3.com/bid":	
-	        time.Sleep(300 * time.Millisecond)
-	    }
-	    return nil
-	}
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		domain := "http://" + r.Host
+		if domain == DSPS[0] {
+			time.Sleep(300 * time.Millisecond)
+		}
+		i := sort.StringSlice(DSPS).Search(domain)
+		w.Write([]byte(fmt.Sprintf(`{"Bidprice": %d, "Body": "some html for domain%d"}`, i, i)))
+	})
+	httpClient, teardown := testingHTTPClient(h)
+	defer teardown()
 
-	httpmock.Activate()
-    defer httpmock.DeactivateAndReset()
-    for _, dsp := range DSPS {
-    	url := dsp + "/bid"
-        httpmock.RegisterResponder("POST", url, httpmock.NewBytesResponder(200, getJsonMockBytes(url)))
-    }
-
-	req, err := http.NewRequest("GET", "/ad?w=1&h=1", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rr := httptest.NewRecorder()
-	handler := http.HandlerFunc(Ad)
-	handler.ServeHTTP(rr, req)
-	if status := rr.Code; status != http.StatusOK {
-		t.Errorf("handler returned wrong status code: got %v want %v",
-			status, http.StatusOK)
-	}
-	bytes, _ := ioutil.ReadAll(rr.Body)
-	if body := string(bytes); body != "some html for domain2" {
-		t.Errorf("handler returned wrong body: got '%v' want '%v'",
-			body, "some html for domain2")
-	}
+	SetClient(httpClient)
+	checkStatusAndResponse("/ad?w=1&h=1", http.StatusOK, "some html for domain2", t)
 }
 
 func TestAdWithAllDspTimeout(t *testing.T) {
-	getJsonMockBytes := func(url string) []byte {
-	    switch url {
-	    case "https://domain1.com/bid":
-	    case "https://domain2.com/bid":	
-	    case "https://domain3.com/bid":	
-	    	time.Sleep(300 * time.Millisecond)
-	    }
-	    return nil
-	}
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(300 * time.Millisecond)
+		w.Write([]byte(`{"Bidprice": 1, "Body": "some html for domain"}`))
+	})
+	httpClient, teardown := testingHTTPClient(h)
+	defer teardown()
 
-	httpmock.Activate()
-    defer httpmock.DeactivateAndReset()
-    for _, dsp := range DSPS {
-    	url := dsp + "/bid"
-        httpmock.RegisterResponder("POST", url, httpmock.NewBytesResponder(200, getJsonMockBytes(url)))
-    }
-
-	req, err := http.NewRequest("GET", "/ad?w=1&h=1", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rr := httptest.NewRecorder()
-	handler := http.HandlerFunc(Ad)
-	handler.ServeHTTP(rr, req)
-	if status := rr.Code; status != http.StatusNoContent {
-		t.Errorf("handler returned wrong status code: got %v want %v",
-			status, http.StatusNoContent)
-	}
-	bytes, _ := ioutil.ReadAll(rr.Body)
-	if body := string(bytes); body != "no ad" {
-		t.Errorf("handler returned wrong body: got '%v' want '%v'",
-			body, "no ad")
-	}
+	SetClient(httpClient)
+    checkStatusAndResponse("/ad?w=1&h=1", http.StatusNoContent, "no ad", t)
 }
